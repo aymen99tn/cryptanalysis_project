@@ -1,0 +1,13 @@
+# Target labels
+ ELF2UF2Build
+# Source files and their labels
+/home/aymen/projects/private_smart_meter/build/CMakeFiles/ELF2UF2Build
+/home/aymen/projects/private_smart_meter/build/CMakeFiles/ELF2UF2Build.rule
+/home/aymen/projects/private_smart_meter/build/CMakeFiles/ELF2UF2Build-complete.rule
+/home/aymen/projects/private_smart_meter/build/elf2uf2/src/ELF2UF2Build-stamp/ELF2UF2Build-build.rule
+/home/aymen/projects/private_smart_meter/build/elf2uf2/src/ELF2UF2Build-stamp/ELF2UF2Build-configure.rule
+/home/aymen/projects/private_smart_meter/build/elf2uf2/src/ELF2UF2Build-stamp/ELF2UF2Build-download.rule
+/home/aymen/projects/private_smart_meter/build/elf2uf2/src/ELF2UF2Build-stamp/ELF2UF2Build-install.rule
+/home/aymen/projects/private_smart_meter/build/elf2uf2/src/ELF2UF2Build-stamp/ELF2UF2Build-mkdir.rule
+/home/aymen/projects/private_smart_meter/build/elf2uf2/src/ELF2UF2Build-stamp/ELF2UF2Build-patch.rule
+/home/aymen/projects/private_smart_meter/build/elf2uf2/src/ELF2UF2Build-stamp/ELF2UF2Build-update.rule
