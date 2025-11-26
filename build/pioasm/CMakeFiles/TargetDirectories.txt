@@ -1,3 +1,0 @@
-/home/aymen/projects/private_smart_meter/build/pioasm/CMakeFiles/pioasm.dir
-/home/aymen/projects/private_smart_meter/build/pioasm/CMakeFiles/edit_cache.dir
-/home/aymen/projects/private_smart_meter/build/pioasm/CMakeFiles/rebuild_cache.dir
