@@ -1,20 +1,26 @@
 # Prerequisites
 *.d
 
-# Object files
+# Build artifacts and outputs
+build/
 *.o
-*.ko
 *.obj
 *.elf
+*.out
+*.exe
+*.app
+*.hex
+*.log
 
-# Linker output
+# Linker/debug
 *.ilk
 *.map
 *.exp
-
-# Precompiled Headers
-*.gch
-*.pch
+*.pdb
+*.dSYM/
+*.su
+*.idb
+*.dwo
 
 # Libraries
 *.lib
@@ -22,34 +28,32 @@
 *.la
 *.lo
 
-# Shared objects (inc. Windows DLLs)
+# Shared objects
 *.dll
 *.so
 *.so.*
 *.dylib
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile
 
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
+# IDE/editor
+.vscode/
+.idea/
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# Certificates/keys
+*.pem
+*.csr
 
-# debug information files
-*.dwo
+# Docs not under version control
+AGENTS.md
+GEMINI.md
+*.md
+*.tex
+*.pdf
+acmart-primary/
+report.*

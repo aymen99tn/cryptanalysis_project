@@ -1,184 +1,283 @@
-#include "openssl/ssl.h"
-#include "openssl/err.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <sqlite3.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <iostream>
-#include <string.h>
+#include <optional>
+#include <string>
+#include <string_view>
 
-#include <openssl/applink.c>
+namespace fs = std::filesystem;
 
-#define PORT 8080
+constexpr int kPort = 8080;
+constexpr const char *kDefaultCert = "cert.pem";
+constexpr const char *kDefaultKey = "key.pem";
+constexpr const char *kDefaultDb = "data/documents.db";
 
-void initialize_openssl() {
-    SSL_load_error_strings();
-    OpenSSL_add_ssl_algorithms();
+static void log_ssl_errors(const std::string &context) {
+    unsigned long err;
+    while ((err = ERR_get_error()) != 0) {
+        char buf[256];
+        ERR_error_string_n(err, buf, sizeof(buf));
+        std::cerr << context << ": " << buf << std::endl;
+    }
 }
 
-void cleanup_openssl() {
-    EVP_cleanup();
-}
-
-SSL_CTX *create_context() {
-    const SSL_METHOD *method;
-    SSL_CTX *ctx;
-
-    method = TLS_server_method();
-
-    ctx = SSL_CTX_new(method);
+static SSL_CTX *create_server_context() {
+    const SSL_METHOD *method = TLS_server_method();
+    SSL_CTX *ctx = SSL_CTX_new(method);
     if (!ctx) {
-        perror("Unable to create SSL context");
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
+        log_ssl_errors("SSL_CTX_new");
+        std::exit(EXIT_FAILURE);
     }
 
+    // Prefer modern AEAD suites.
+    if (SSL_CTX_set_ciphersuites(ctx, "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256") != 1) {
+        log_ssl_errors("set_ciphersuites");
+        std::exit(EXIT_FAILURE);
+    }
+
+    // Request client cert optionally; can tighten later.
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
     return ctx;
 }
 
-void configure_context(SSL_CTX *ctx) {
-    if (SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0) {
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
+static void load_credentials(SSL_CTX *ctx, const std::string &cert_path, const std::string &key_path) {
+    if (SSL_CTX_use_certificate_file(ctx, cert_path.c_str(), SSL_FILETYPE_PEM) <= 0) {
+        log_ssl_errors("use_certificate_file");
+        std::exit(EXIT_FAILURE);
     }
-
-    if (SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM) <= 0) {
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    const char *ciphersuites = "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256";
-    if (SSL_CTX_set_ciphersuites(ctx, ciphersuites) != 1) {
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_path.c_str(), SSL_FILETYPE_PEM) <= 0) {
+        log_ssl_errors("use_PrivateKey_file");
+        std::exit(EXIT_FAILURE);
     }
 }
 
-void log_ssl_error() {
-    unsigned long err_code;
-    char err_buf[256];
-    while ((err_code = ERR_get_error()) != 0) {
-        ERR_error_string_n(err_code, err_buf, sizeof(err_buf));
-        std::cerr << "SSL error: " << err_buf << std::endl;
-    }
-}
-
-int main(int argc, char **argv) {
-    int sock;
-    SSL_CTX *ctx;
-
-    WSADATA wsaData;
-    int wsaerr = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (wsaerr != 0) {
-        std::cerr << "WSAStartup failed: " << wsaerr << std::endl;
-        return EXIT_FAILURE;
-    }
-
-    initialize_openssl();
-    ctx = create_context();
-
-    configure_context(ctx);
-
-    struct sockaddr_in addr;
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+static int create_listen_socket() {
+    int sock = ::socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
-        perror("Unable to create socket");
-        log_ssl_error();
-        return EXIT_FAILURE;
+        perror("socket");
+        std::exit(EXIT_FAILURE);
     }
 
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(PORT);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(kPort);
 
-    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("Unable to bind");
-        log_ssl_error();
-        return EXIT_FAILURE;
+    if (bind(sock, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
+        perror("bind");
+        close(sock);
+        std::exit(EXIT_FAILURE);
     }
 
-    if (listen(sock, 1) < 0) {
-        perror("Unable to listen");
-        log_ssl_error();
-        return EXIT_FAILURE;
+    if (listen(sock, 8) < 0) {
+        perror("listen");
+        close(sock);
+        std::exit(EXIT_FAILURE);
     }
 
-    while (1) {
-        struct sockaddr_in addr;
-        int len = sizeof(addr);
-        SSL *ssl;
+    return sock;
+}
 
-        int client = accept(sock, (struct sockaddr*)&addr, &len);
-        if (client < 0) {
-            perror("Unable to accept");
-            log_ssl_error();
-            return EXIT_FAILURE;
+struct Document {
+    std::string id;
+    std::string mime;
+    std::string content;
+};
+
+static int ensure_schema(sqlite3 *db) {
+    const char *sql = R"SQL(
+        CREATE TABLE IF NOT EXISTS documents (
+            id TEXT PRIMARY KEY,
+            mime TEXT NOT NULL,
+            content BLOB NOT NULL
+        );
+    )SQL";
+    char *errmsg = nullptr;
+    int rc = sqlite3_exec(db, sql, nullptr, nullptr, &errmsg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQLite error: " << (errmsg ? errmsg : "unknown") << std::endl;
+        sqlite3_free(errmsg);
+    }
+    return rc;
+}
+
+static void seed_documents(sqlite3 *db) {
+    const char *count_sql = "SELECT COUNT(*) FROM documents;";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, count_sql, -1, &stmt, nullptr) != SQLITE_OK) return;
+    int rc = sqlite3_step(stmt);
+    int count = (rc == SQLITE_ROW) ? sqlite3_column_int(stmt, 0) : 0;
+    sqlite3_finalize(stmt);
+    if (count > 0) return;
+
+    const char *insert_sql = "INSERT INTO documents (id, mime, content) VALUES (?, ?, ?);";
+    if (sqlite3_prepare_v2(db, insert_sql, -1, &stmt, nullptr) != SQLITE_OK) return;
+
+    struct Seed { const char *id; const char *mime; const char *body; } seeds[] = {
+        {"welcome", "text/html", "<html><body><h1>Welcome</h1><p>Secure content served over TLS.</p></body></html>"},
+        {"readme", "text/plain", "Sample document stored in SQLite for OpenSSL demo."}
+    };
+
+    for (const auto &seed : seeds) {
+        sqlite3_bind_text(stmt, 1, seed.id, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, seed.mime, -1, SQLITE_STATIC);
+        sqlite3_bind_blob(stmt, 3, seed.body, static_cast<int>(strlen(seed.body)), SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+    }
+    sqlite3_finalize(stmt);
+}
+
+static std::optional<Document> fetch_document(sqlite3 *db, std::string_view id) {
+    const char *sql = "SELECT id, mime, content FROM documents WHERE id = ?;";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) return std::nullopt;
+    sqlite3_bind_text(stmt, 1, id.data(), static_cast<int>(id.size()), SQLITE_STATIC);
+
+    Document doc;
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        doc.id = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+        doc.mime = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
+        const unsigned char *blob = reinterpret_cast<const unsigned char *>(sqlite3_column_blob(stmt, 2));
+        int blob_size = sqlite3_column_bytes(stmt, 2);
+        doc.content.assign(reinterpret_cast<const char *>(blob), blob_size);
+        sqlite3_finalize(stmt);
+        return doc;
+    }
+
+    sqlite3_finalize(stmt);
+    return std::nullopt;
+}
+
+static bool send_all(SSL *ssl, const void *data, size_t len) {
+    const unsigned char *p = static_cast<const unsigned char *>(data);
+    size_t sent = 0;
+    while (sent < len) {
+        int ret = SSL_write(ssl, p + sent, static_cast<int>(len - sent));
+        if (ret <= 0) {
+            log_ssl_errors("SSL_write");
+            return false;
         }
+        sent += static_cast<size_t>(ret);
+    }
+    return true;
+}
 
-        std::cout << "Accepted connection from client" << std::endl;
+static void handle_client(SSL *ssl, sqlite3 *db) {
+    char buffer[2048];
+    int ret = SSL_read(ssl, buffer, sizeof(buffer) - 1);
+    if (ret <= 0) {
+        log_ssl_errors("SSL_read");
+        return;
+    }
+    buffer[ret] = '\0';
+    std::string request(buffer);
 
-        ssl = SSL_new(ctx);
-        SSL_set_fd(ssl, client);
+    // Expect: GET <id>\n
+    const std::string prefix = "GET ";
+    if (request.rfind(prefix, 0) != 0) {
+        const char msg[] = "ERR unsupported_command\n";
+        send_all(ssl, msg, sizeof(msg) - 1);
+        return;
+    }
 
-        if (SSL_accept(ssl) <= 0) {
-            log_ssl_error();
-            SSL_free(ssl);
-            closesocket(client);
+    auto nl = request.find('\n');
+    std::string id = request.substr(prefix.size(), nl == std::string::npos ? std::string::npos : nl - prefix.size());
+    if (id.empty()) {
+        const char msg[] = "ERR missing_id\n";
+        send_all(ssl, msg, sizeof(msg) - 1);
+        return;
+    }
+
+    auto doc = fetch_document(db, id);
+    if (!doc) {
+        const char msg[] = "ERR not_found\n";
+        send_all(ssl, msg, sizeof(msg) - 1);
+        return;
+    }
+
+    std::string header = "OK " + doc->mime + " " + std::to_string(doc->content.size()) + "\n";
+    if (!send_all(ssl, header.data(), header.size())) return;
+    send_all(ssl, doc->content.data(), doc->content.size());
+}
+
+int main() {
+    const char *cert_env = std::getenv("TLS_CERT");
+    const char *key_env = std::getenv("TLS_KEY");
+    const char *db_env = std::getenv("DOC_DB");
+
+    std::string cert_path = cert_env ? cert_env : kDefaultCert;
+    std::string key_path = key_env ? key_env : kDefaultKey;
+    std::string db_path = db_env ? db_env : kDefaultDb;
+
+    fs::create_directories(fs::path(db_path).parent_path());
+
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(db_path.c_str(), &db) != SQLITE_OK) {
+        std::cerr << "Failed to open database at " << db_path << std::endl;
+        return EXIT_FAILURE;
+    }
+    if (ensure_schema(db) != SQLITE_OK) return EXIT_FAILURE;
+    seed_documents(db);
+
+    SSL_library_init();
+    SSL_load_error_strings();
+    OpenSSL_add_ssl_algorithms();
+
+    SSL_CTX *ctx = create_server_context();
+    load_credentials(ctx, cert_path, key_path);
+
+    int listen_fd = create_listen_socket();
+    std::cout << "Listening on port " << kPort << "..." << std::endl;
+
+    while (true) {
+        sockaddr_in addr{};
+        socklen_t len = sizeof(addr);
+        int client_fd = accept(listen_fd, reinterpret_cast<sockaddr *>(&addr), &len);
+        if (client_fd < 0) {
+            perror("accept");
             continue;
         }
 
-        std::cout << "SSL Handshake completed" << std::endl;
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+        std::cout << "Connection from " << ip << std::endl;
 
-        const char reply[] = "Hello, secure Pico W!";
-        int ret = SSL_write(ssl, reply, strlen(reply));
-        if (ret <= 0) {
-            log_ssl_error();
-        } else {
-            std::cout << "Sent message: " << reply << std::endl;
+        SSL *ssl = SSL_new(ctx);
+        SSL_set_fd(ssl, client_fd);
+
+        if (SSL_accept(ssl) <= 0) {
+            log_ssl_errors("SSL_accept");
+            SSL_free(ssl);
+            close(client_fd);
+            continue;
         }
 
-        char buf[1024];
-        while (1) {
-            ret = SSL_read(ssl, buf, sizeof(buf) - 1);
-            if (ret <= 0) {
-                if (ret < 0) {
-                    log_ssl_error();
-                }
-                break;
-            }
-            buf[ret] = '\0';
-            std::cout << "Received message: " << buf << std::endl;
-
-            // Optional: Echo the received message back to the client
-            ret = SSL_write(ssl, buf, ret);
-            if (ret <= 0) {
-                log_ssl_error();
-                break;
-            }
-        }
+        handle_client(ssl, db);
 
         SSL_shutdown(ssl);
         SSL_free(ssl);
-        closesocket(client);
+        close(client_fd);
     }
 
-    closesocket(sock);
+    close(listen_fd);
+    sqlite3_close(db);
     SSL_CTX_free(ctx);
-    cleanup_openssl();
-    WSACleanup();
-
+    EVP_cleanup();
     return 0;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
