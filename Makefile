@@ -1,12 +1,12 @@
 CXX ?= g++
-CXXFLAGS ?= -O2 -Wall -Wextra -std=c++17
+CXXFLAGS ?= -O2 -Wall -Wextra -pedantic -std=c++17
 LDFLAGS ?= -lssl -lcrypto
 
 CLIENT = client
 
 all: $(CLIENT)
 
-$(CLIENT): client.cpp
+$(CLIENT): client-side.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 clean:
