@@ -25,3 +25,10 @@ Thumbs.db
 *.exp
 *.ilk
 *.exe
+
+# Docs and reports (keep outside git)
+*.md
+*.tex
+*.pdf
+acmart-primary/
+report.*
