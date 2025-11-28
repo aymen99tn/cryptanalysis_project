@@ -5,6 +5,7 @@
 #include <sqlite3.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <cstdio>
@@ -22,6 +23,8 @@ constexpr int kPort = 8080;
 constexpr const char *kDefaultCert = "cert.pem";
 constexpr const char *kDefaultKey = "key.pem";
 constexpr const char *kDefaultDb = "data/documents.db";
+constexpr size_t kMaxRequestLine = 1024;
+constexpr int kSocketTimeoutSeconds = 5;
 
 static void log_ssl_errors(const std::string &context) {
     unsigned long err;
@@ -39,6 +42,13 @@ static SSL_CTX *create_server_context() {
         log_ssl_errors("SSL_CTX_new");
         std::exit(EXIT_FAILURE);
     }
+
+    if (SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION) != 1) {
+        log_ssl_errors("set_min_proto_version");
+        std::exit(EXIT_FAILURE);
+    }
+
+    SSL_CTX_set_options(ctx, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
 
     // Prefer modern AEAD suites.
     if (SSL_CTX_set_ciphersuites(ctx, "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256") != 1) {
@@ -58,6 +68,10 @@ static void load_credentials(SSL_CTX *ctx, const std::string &cert_path, const s
     }
     if (SSL_CTX_use_PrivateKey_file(ctx, key_path.c_str(), SSL_FILETYPE_PEM) <= 0) {
         log_ssl_errors("use_PrivateKey_file");
+        std::exit(EXIT_FAILURE);
+    }
+    if (SSL_CTX_check_private_key(ctx) != 1) {
+        log_ssl_errors("check_private_key");
         std::exit(EXIT_FAILURE);
     }
 }
@@ -90,6 +104,14 @@ static int create_listen_socket() {
     }
 
     return sock;
+}
+
+static void set_socket_timeouts(int fd) {
+    timeval tv{};
+    tv.tv_sec = kSocketTimeoutSeconds;
+    tv.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 }
 
 struct Document {
@@ -179,16 +201,24 @@ static bool send_all(SSL *ssl, const void *data, size_t len) {
 }
 
 static void handle_client(SSL *ssl, sqlite3 *db) {
-    char buffer[2048];
-    int ret = SSL_read(ssl, buffer, sizeof(buffer) - 1);
-    if (ret <= 0) {
-        log_ssl_errors("SSL_read");
-        return;
+    std::string request;
+    char ch;
+    while (true) {
+        int ret = SSL_read(ssl, &ch, 1);
+        if (ret <= 0) {
+            log_ssl_errors("SSL_read");
+            return;
+        }
+        if (ch == '\n') break;
+        if (request.size() >= kMaxRequestLine) {
+            const char msg[] = "ERR request_too_long\n";
+            send_all(ssl, msg, sizeof(msg) - 1);
+            return;
+        }
+        request.push_back(ch);
     }
-    buffer[ret] = '\0';
-    std::string request(buffer);
 
-    // Expect: GET <id>\n
+    // Expect: GET <id>
     const std::string prefix = "GET ";
     if (request.rfind(prefix, 0) != 0) {
         const char msg[] = "ERR unsupported_command\n";
@@ -196,8 +226,7 @@ static void handle_client(SSL *ssl, sqlite3 *db) {
         return;
     }
 
-    auto nl = request.find('\n');
-    std::string id = request.substr(prefix.size(), nl == std::string::npos ? std::string::npos : nl - prefix.size());
+    std::string id = request.substr(prefix.size());
     if (id.empty()) {
         const char msg[] = "ERR missing_id\n";
         send_all(ssl, msg, sizeof(msg) - 1);
@@ -235,9 +264,7 @@ int main() {
     if (ensure_schema(db) != SQLITE_OK) return EXIT_FAILURE;
     seed_documents(db);
 
-    SSL_library_init();
-    SSL_load_error_strings();
-    OpenSSL_add_ssl_algorithms();
+    OPENSSL_init_ssl(0, nullptr);
 
     SSL_CTX *ctx = create_server_context();
     load_credentials(ctx, cert_path, key_path);
@@ -253,6 +280,7 @@ int main() {
             perror("accept");
             continue;
         }
+        set_socket_timeouts(client_fd);
 
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
@@ -268,6 +296,9 @@ int main() {
             continue;
         }
 
+        const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
+        std::cout << "Negotiated " << SSL_get_version(ssl) << " / " << SSL_CIPHER_get_name(cipher) << std::endl;
+
         handle_client(ssl, db);
 
         SSL_shutdown(ssl);
@@ -278,6 +309,5 @@ int main() {
     close(listen_fd);
     sqlite3_close(db);
     SSL_CTX_free(ctx);
-    EVP_cleanup();
     return 0;
 }
