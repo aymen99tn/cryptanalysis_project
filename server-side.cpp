@@ -2,11 +2,12 @@
 #include <netinet/in.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-#include <sqlite3.h>
+#include "sqlite3.h"
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <csignal>
 
 #include <cstdio>
 #include <cstdlib>
@@ -26,6 +27,10 @@ constexpr const char *kDefaultDb = "data/documents.db";
 constexpr size_t kMaxRequestLine = 1024;
 constexpr int kSocketTimeoutSeconds = 5;
 
+// Global handles for signal cleanup
+sqlite3 *g_db = nullptr;
+int g_listen_fd = -1;
+
 static void log_ssl_errors(const std::string &context) {
     unsigned long err;
     while ((err = ERR_get_error()) != 0) {
@@ -33,6 +38,13 @@ static void log_ssl_errors(const std::string &context) {
         ERR_error_string_n(err, buf, sizeof(buf));
         std::cerr << context << ": " << buf << std::endl;
     }
+}
+
+static void signal_handler(int signum) {
+    std::cout << "\nCaught signal " << signum << ", shutting down..." << std::endl;
+    if (g_listen_fd != -1) close(g_listen_fd);
+    if (g_db) sqlite3_close(g_db);
+    std::exit(EXIT_SUCCESS);
 }
 
 static SSL_CTX *create_server_context() {
@@ -200,7 +212,7 @@ static bool send_all(SSL *ssl, const void *data, size_t len) {
     return true;
 }
 
-static void handle_client(SSL *ssl, sqlite3 *db) {
+static void handle_client(SSL *ssl, sqlite3 *db, const char *client_ip) {
     std::string request;
     char ch;
     while (true) {
@@ -213,6 +225,7 @@ static void handle_client(SSL *ssl, sqlite3 *db) {
         if (request.size() >= kMaxRequestLine) {
             const char msg[] = "ERR request_too_long\n";
             send_all(ssl, msg, sizeof(msg) - 1);
+            std::cout << "[LOG] IP=" << client_ip << " Status=ERR_TOO_LONG" << std::endl;
             return;
         }
         request.push_back(ch);
@@ -223,6 +236,7 @@ static void handle_client(SSL *ssl, sqlite3 *db) {
     if (request.rfind(prefix, 0) != 0) {
         const char msg[] = "ERR unsupported_command\n";
         send_all(ssl, msg, sizeof(msg) - 1);
+        std::cout << "[LOG] IP=" << client_ip << " Status=ERR_UNSUPPORTED" << std::endl;
         return;
     }
 
@@ -230,6 +244,7 @@ static void handle_client(SSL *ssl, sqlite3 *db) {
     if (id.empty()) {
         const char msg[] = "ERR missing_id\n";
         send_all(ssl, msg, sizeof(msg) - 1);
+        std::cout << "[LOG] IP=" << client_ip << " Status=ERR_MISSING_ID" << std::endl;
         return;
     }
 
@@ -237,15 +252,20 @@ static void handle_client(SSL *ssl, sqlite3 *db) {
     if (!doc) {
         const char msg[] = "ERR not_found\n";
         send_all(ssl, msg, sizeof(msg) - 1);
+        std::cout << "[LOG] IP=" << client_ip << " ID=" << id << " Status=404_NOT_FOUND" << std::endl;
         return;
     }
 
     std::string header = "OK " + doc->mime + " " + std::to_string(doc->content.size()) + "\n";
     if (!send_all(ssl, header.data(), header.size())) return;
     send_all(ssl, doc->content.data(), doc->content.size());
+    std::cout << "[LOG] IP=" << client_ip << " ID=" << id << " Status=200_OK" << std::endl;
 }
 
 int main() {
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+
     const char *cert_env = std::getenv("TLS_CERT");
     const char *key_env = std::getenv("TLS_KEY");
     const char *db_env = std::getenv("DOC_DB");
@@ -256,26 +276,25 @@ int main() {
 
     fs::create_directories(fs::path(db_path).parent_path());
 
-    sqlite3 *db = nullptr;
-    if (sqlite3_open(db_path.c_str(), &db) != SQLITE_OK) {
+    if (sqlite3_open(db_path.c_str(), &g_db) != SQLITE_OK) {
         std::cerr << "Failed to open database at " << db_path << std::endl;
         return EXIT_FAILURE;
     }
-    if (ensure_schema(db) != SQLITE_OK) return EXIT_FAILURE;
-    seed_documents(db);
+    if (ensure_schema(g_db) != SQLITE_OK) return EXIT_FAILURE;
+    seed_documents(g_db);
 
     OPENSSL_init_ssl(0, nullptr);
 
     SSL_CTX *ctx = create_server_context();
     load_credentials(ctx, cert_path, key_path);
 
-    int listen_fd = create_listen_socket();
+    g_listen_fd = create_listen_socket();
     std::cout << "Listening on port " << kPort << "..." << std::endl;
 
     while (true) {
         sockaddr_in addr{};
         socklen_t len = sizeof(addr);
-        int client_fd = accept(listen_fd, reinterpret_cast<sockaddr *>(&addr), &len);
+        int client_fd = accept(g_listen_fd, reinterpret_cast<sockaddr *>(&addr), &len);
         if (client_fd < 0) {
             perror("accept");
             continue;
@@ -299,15 +318,16 @@ int main() {
         const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
         std::cout << "Negotiated " << SSL_get_version(ssl) << " / " << SSL_CIPHER_get_name(cipher) << std::endl;
 
-        handle_client(ssl, db);
+        handle_client(ssl, g_db, ip);
 
         SSL_shutdown(ssl);
         SSL_free(ssl);
         close(client_fd);
     }
 
-    close(listen_fd);
-    sqlite3_close(db);
+    // Should be unreachable due to signals, but for completeness:
+    close(g_listen_fd);
+    sqlite3_close(g_db);
     SSL_CTX_free(ctx);
     return 0;
 }
