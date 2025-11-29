@@ -1,10 +1,11 @@
-# Prerequisites
+# Prerequisites / deps
 *.d
 
-# Build artifacts and outputs
+# Build artifacts and binaries
 build/
 *.o
 *.obj
+client
 *.elf
 *.out
 *.exe
@@ -34,6 +35,16 @@ build/
 *.so.*
 *.dylib
 
+# LaTeX generated files
+*.aux
+*.bbl
+*.blg
+*.toc
+*.lof
+*.lot
+*.fdb_latexmk
+*.fls
+
 # CMake
 CMakeCache.txt
 CMakeFiles/
@@ -41,17 +52,17 @@ cmake_install.cmake
 compile_commands.json
 Makefile
 
-# IDE/editor
+# Editor/OS
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
 
 # Certificates/keys
 *.pem
 *.csr
 
-# Docs not under version control
-AGENTS.md
-GEMINI.md
+# Docs/reports kept out of git
 *.md
 *.tex
 *.pdf
