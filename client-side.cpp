@@ -10,14 +10,35 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 
 constexpr int kDefaultPort = 8080;
 constexpr const char *kDefaultHost = "127.0.0.1";
 constexpr const char *kDefaultDoc = "welcome";
+constexpr const char *kDefaultCaCert = "";
 constexpr size_t kMaxContentLength = 1 << 20;  // 1 MiB cap to avoid runaway allocations
 constexpr int kSocketTimeoutSeconds = 5;
+
+// RAII wrappers for resource management
+struct SSLDeleter {
+    void operator()(SSL *ssl) const {
+        if (ssl) {
+            SSL_shutdown(ssl);
+            SSL_free(ssl);
+        }
+    }
+};
+
+struct SSLCtxDeleter {
+    void operator()(SSL_CTX *ctx) const {
+        if (ctx) SSL_CTX_free(ctx);
+    }
+};
+
+using UniqueSSL = std::unique_ptr<SSL, SSLDeleter>;
+using UniqueSSLCtx = std::unique_ptr<SSL_CTX, SSLCtxDeleter>;
 
 static void log_ssl_errors(const std::string &ctx) {
     unsigned long err;
@@ -28,35 +49,40 @@ static void log_ssl_errors(const std::string &ctx) {
     }
 }
 
-static SSL_CTX *create_client_context(const std::string &ca_path, bool verify) {
+static UniqueSSLCtx create_client_context(const std::string &ca_path, bool verify) {
     const SSL_METHOD *method = TLS_client_method();
-    SSL_CTX *ctx = SSL_CTX_new(method);
-    if (!ctx) {
+    SSL_CTX *raw_ctx = SSL_CTX_new(method);
+    if (!raw_ctx) {
         log_ssl_errors("SSL_CTX_new");
         std::exit(EXIT_FAILURE);
     }
 
-    if (SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION) != 1) {
+    UniqueSSLCtx ctx(raw_ctx);
+
+    if (SSL_CTX_set_min_proto_version(ctx.get(), TLS1_3_VERSION) != 1) {
         log_ssl_errors("set_min_proto_version");
         std::exit(EXIT_FAILURE);
     }
 
-    SSL_CTX_set_options(ctx, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
+    SSL_CTX_set_options(ctx.get(), SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
 
-    if (SSL_CTX_set_ciphersuites(ctx, "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256") != 1) {
+    if (SSL_CTX_set_ciphersuites(ctx.get(), "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256") != 1) {
         log_ssl_errors("set_ciphersuites");
         std::exit(EXIT_FAILURE);
     }
 
+    // Enable TLS 1.3 session resumption (client side)
+    SSL_CTX_set_session_cache_mode(ctx.get(), SSL_SESS_CACHE_CLIENT);
+
     if (verify) {
-        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
-        SSL_CTX_set_default_verify_paths(ctx);
-        if (SSL_CTX_load_verify_locations(ctx, ca_path.c_str(), nullptr) != 1) {
+        SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_PEER, nullptr);
+        SSL_CTX_set_default_verify_paths(ctx.get());
+        if (SSL_CTX_load_verify_locations(ctx.get(), ca_path.c_str(), nullptr) != 1) {
             log_ssl_errors("load_verify_locations");
             std::exit(EXIT_FAILURE);
         }
     } else {
-        SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
+        SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, nullptr);
     }
 
     return ctx;
@@ -94,8 +120,12 @@ static void set_socket_timeouts(int sock) {
     timeval tv{};
     tv.tv_sec = kSocketTimeoutSeconds;
     tv.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        perror("setsockopt SO_RCVTIMEO");
+    }
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
+        perror("setsockopt SO_SNDTIMEO");
+    }
 }
 
 static bool recv_line(SSL *ssl, std::string &out) {
@@ -127,17 +157,72 @@ static bool recv_exact(SSL *ssl, std::string &out, size_t len) {
     return true;
 }
 
+static void print_usage(const char *prog_name) {
+    std::cerr << "Usage: " << prog_name << " [host] [port] [doc_id] [ca_file] [verify]\n"
+              << "  host     - Server hostname/IP (default: " << kDefaultHost << ")\n"
+              << "  port     - Server port (default: " << kDefaultPort << ")\n"
+              << "  doc_id   - Document ID to fetch (default: " << kDefaultDoc << ")\n"
+              << "  ca_file  - CA certificate file for verification (default: none)\n"
+              << "  verify   - Enable certificate verification: 0 or 1 (default: 0)\n"
+              << "\nEnvironment variables:\n"
+              << "  SERVER_HOST - Override default host\n"
+              << "  SERVER_PORT - Override default port\n"
+              << "  TLS_CA_CERT - CA certificate path\n";
+}
+
 int main(int argc, char **argv) {
-    std::string host = std::getenv("SERVER_HOST") ? std::getenv("SERVER_HOST") : kDefaultHost;
-    int port = std::getenv("SERVER_PORT") ? std::atoi(std::getenv("SERVER_PORT")) : kDefaultPort;
-    std::string doc_id = (argc >= 2) ? argv[1] : kDefaultDoc;
+    // Parse command-line arguments according to documented interface
+    std::string host = kDefaultHost;
+    int port = kDefaultPort;
+    std::string doc_id = kDefaultDoc;
+    std::string ca_path = kDefaultCaCert;
+    bool verify = false;
+
+    if (argc > 1) {
+        if (std::strcmp(argv[1], "-h") == 0 || std::strcmp(argv[1], "--help") == 0) {
+            print_usage(argv[0]);
+            return EXIT_SUCCESS;
+        }
+        host = argv[1];
+    }
+    if (argc > 2) {
+        port = std::atoi(argv[2]);
+        if (port <= 0 || port > 65535) {
+            std::cerr << "Invalid port number: " << argv[2] << std::endl;
+            return EXIT_FAILURE;
+        }
+    }
+    if (argc > 3) {
+        doc_id = argv[3];
+    }
+    if (argc > 4) {
+        ca_path = argv[4];
+    }
+    if (argc > 5) {
+        verify = (std::strcmp(argv[5], "1") == 0 || std::strcmp(argv[5], "true") == 0);
+    }
+
+    // Environment variables can still override
+    const char *host_env = std::getenv("SERVER_HOST");
+    const char *port_env = std::getenv("SERVER_PORT");
     const char *ca_env = std::getenv("TLS_CA_CERT");
-    bool verify = ca_env && std::strlen(ca_env) > 0;
-    std::string ca_path = ca_env ? ca_env : "";
+
+    if (host_env) host = host_env;
+    if (port_env) {
+        port = std::atoi(port_env);
+        if (port <= 0 || port > 65535) {
+            std::cerr << "Invalid SERVER_PORT: " << port_env << std::endl;
+            return EXIT_FAILURE;
+        }
+    }
+    if (ca_env && std::strlen(ca_env) > 0) {
+        ca_path = ca_env;
+        verify = true;
+    }
 
     OPENSSL_init_ssl(0, nullptr);
 
-    SSL_CTX *ctx = create_client_context(ca_path, verify);
+    UniqueSSLCtx ctx = create_client_context(ca_path, verify);
 
     int sock = connect_tcp(host, port);
     if (sock < 0) {
@@ -146,43 +231,51 @@ int main(int argc, char **argv) {
     }
     set_socket_timeouts(sock);
 
-    SSL *ssl = SSL_new(ctx);
-    SSL_set_fd(ssl, sock);
-    SSL_set_tlsext_host_name(ssl, host.c_str());
-
-    if (verify) {
-        X509_VERIFY_PARAM *param = SSL_get0_param(ssl);
-        X509_VERIFY_PARAM_set1_host(param, host.c_str(), 0);
-    }
-
-    if (SSL_connect(ssl) <= 0) {
-        log_ssl_errors("SSL_connect");
-        SSL_free(ssl);
+    SSL *raw_ssl = SSL_new(ctx.get());
+    if (!raw_ssl) {
+        log_ssl_errors("SSL_new");
         close(sock);
         return EXIT_FAILURE;
     }
 
-    const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
-    std::cout << "Negotiated " << SSL_get_version(ssl) << " / " << SSL_CIPHER_get_name(cipher) << std::endl;
+    UniqueSSL ssl(raw_ssl);
+    SSL_set_fd(ssl.get(), sock);
+    SSL_set_tlsext_host_name(ssl.get(), host.c_str());
+
+    if (verify) {
+        X509_VERIFY_PARAM *param = SSL_get0_param(ssl.get());
+        X509_VERIFY_PARAM_set1_host(param, host.c_str(), 0);
+    }
+
+    if (SSL_connect(ssl.get()) <= 0) {
+        log_ssl_errors("SSL_connect");
+        close(sock);
+        return EXIT_FAILURE;
+    }
+
+    const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl.get());
+    bool resumed = SSL_session_reused(ssl.get());
+    std::cout << "Negotiated " << SSL_get_version(ssl.get()) << " / " << SSL_CIPHER_get_name(cipher);
+    if (resumed) {
+        std::cout << " (session resumed)";
+    }
+    std::cout << std::endl;
 
     std::string request = "GET " + doc_id + "\n";
-    if (SSL_write(ssl, request.data(), static_cast<int>(request.size())) <= 0) {
+    if (SSL_write(ssl.get(), request.data(), static_cast<int>(request.size())) <= 0) {
         log_ssl_errors("SSL_write");
-        SSL_free(ssl);
         close(sock);
         return EXIT_FAILURE;
     }
 
     std::string header;
-    if (!recv_line(ssl, header)) {
-        SSL_free(ssl);
+    if (!recv_line(ssl.get(), header)) {
         close(sock);
         return EXIT_FAILURE;
     }
 
     if (header.rfind("OK ", 0) != 0) {
         std::cerr << "Server error: " << header << std::endl;
-        SSL_free(ssl);
         close(sock);
         return EXIT_FAILURE;
     }
@@ -191,32 +284,35 @@ int main(int argc, char **argv) {
     std::string mime;
     size_t content_len = 0;
     iss >> mime >> content_len;
-    if (mime.empty() || content_len == 0) {
+
+    // Validate parsing succeeded
+    if (iss.fail() || mime.empty()) {
         std::cerr << "Malformed header: " << header << std::endl;
-        SSL_free(ssl);
         close(sock);
         return EXIT_FAILURE;
     }
 
+    if (content_len == 0) {
+        std::cout << "Received empty document (" << mime << ")" << std::endl;
+        close(sock);
+        return EXIT_SUCCESS;
+    }
+
     if (content_len > kMaxContentLength) {
         std::cerr << "Content length exceeds cap (" << content_len << " > " << kMaxContentLength << ")" << std::endl;
-        SSL_free(ssl);
         close(sock);
         return EXIT_FAILURE;
     }
 
     std::string body;
-    if (!recv_exact(ssl, body, content_len)) {
-        SSL_free(ssl);
+    if (!recv_exact(ssl.get(), body, content_len)) {
         close(sock);
         return EXIT_FAILURE;
     }
 
     std::cout << "Received " << content_len << " bytes (" << mime << "):\n" << body << std::endl;
 
-    SSL_shutdown(ssl);
-    SSL_free(ssl);
+    // Cleanup handled automatically by RAII
     close(sock);
-    SSL_CTX_free(ctx);
-    return 0;
+    return EXIT_SUCCESS;
 }
