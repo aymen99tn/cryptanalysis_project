@@ -1,70 +1,87 @@
-# Prerequisites / deps
+# TLS 1.3 Document Server - Git Ignore File
+
+# Build artifacts
+*.o
+*.a
+*.obj
+*.so
+*.dylib
+*.dll
+*.lib
+server
+client
+/server
+/client
+build/
+
+# Prerequisites
 *.d
 
-# Build artifacts and binaries
-build/
-*.o
-*.obj
-client
-*.elf
-*.out
-*.exe
-*.app
-*.hex
+# Log files
 *.log
+logs/*.log
 
-# Linker/debug
-*.ilk
-*.map
-*.exp
-*.pdb
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Python virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Flask session files
+dashboard/flask_session/
+
+# Database files (generated at runtime)
+data/documents.db
+data/*.db
+*.sqlite
+*.sqlite3
+
+# Packet captures (can be large)
+captures/*.pcap
+measurements/
+
+# LaTeX build artifacts
+docs/
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.Zone.Identifier
+.AppleDouble
+.LSOverride
+
+# Debug symbols
 *.dSYM/
 *.su
 *.idb
-*.dwo
+*.pdb
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
+# Test results
+test_results/
+*.result
 
-# Shared objects
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# LaTeX generated files
-*.aux
-*.bbl
-*.blg
-*.toc
-*.lof
-*.lot
-*.fdb_latexmk
-*.fls
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-compile_commands.json
-Makefile
-
-# Editor/OS
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-
-# Certificates/keys
-*.pem
-*.csr
-
-# Docs/reports kept out of git
-*.md
-*.tex
-*.pdf
-acmart-primary/
-report.*
+# Backup files
+*.bak
+*.backup

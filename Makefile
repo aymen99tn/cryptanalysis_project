@@ -8,21 +8,23 @@ LDFLAGS_CLIENT ?= -lssl -lcrypto
 SERVER = server
 CLIENT = client
 
+SRC_DIR = src
+
 all: $(SERVER) $(CLIENT)
 
-$(SERVER): server-side.o sqlite3.o
+$(SERVER): $(SRC_DIR)/server-side.o $(SRC_DIR)/sqlite3.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS_SERVER)
 
-$(CLIENT): client-side.cpp
+$(CLIENT): $(SRC_DIR)/client-side.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS_CLIENT)
 
-server-side.o: server-side.cpp
-	$(CXX) $(CXXFLAGS) -c $<
+$(SRC_DIR)/server-side.o: $(SRC_DIR)/server-side.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-sqlite3.o: sqlite3.c sqlite3.h
-	$(CC) $(CFLAGS) -c sqlite3.c
+$(SRC_DIR)/sqlite3.o: $(SRC_DIR)/sqlite3.c $(SRC_DIR)/sqlite3.h
+	$(CC) $(CFLAGS) -c $(SRC_DIR)/sqlite3.c -o $@
 
 clean:
-	rm -f $(SERVER) $(CLIENT) *.o
+	rm -f $(SERVER) $(CLIENT) $(SRC_DIR)/*.o
 
 .PHONY: all clean
