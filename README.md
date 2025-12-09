@@ -47,18 +47,6 @@ See [`docs/QUICK_START.md`](docs/QUICK_START.md) for more examples.
 
 ---
 
-## 📚 Documentation
-
-| Document | Description |
-|----------|-------------|
-| [`QUICK_START.md`](docs/QUICK_START.md) | Quick reference for common operations |
-| [`DEMO_GUIDE.md`](docs/DEMO_GUIDE.md) | Comprehensive demonstration scenarios |
-| [`docs/DASHBOARD_GUIDE.md`](docs/DASHBOARD_GUIDE.md) | TUI monitor and web dashboard guide |
-| [`CLAUDE.md`](docs/dev_notes/CLAUDE.md) | Developer documentation and architecture |
-| [`docs/README.md`](docs/README.md) | Detailed technical documentation |
-| [`report.pdf`](docs/report.pdf) | ACM-style research report |
-
----
 
 ## 🏗️ Building
 
@@ -146,8 +134,6 @@ Based on real network testing (Kali VM → WSL):
 | **Memory Footprint** | Stable | Zero growth over 100+ connections |
 | **Security** | ✅ TLS 1.2 Rejected | Protocol enforcement validated |
 
-See [`docs/EXPERIMENTAL_RESULTS_SUMMARY.md`](docs/EXPERIMENTAL_RESULTS_SUMMARY.md) for detailed analysis.
-
 ---
 
 ## 🎨 Visual Features
@@ -196,37 +182,6 @@ Received 101 bytes (text/html):
 
 ---
 
-## 📁 Project Structure
-
-```
-.
-├── src/
-│   ├── server-side.cpp         # TLS 1.3 server implementation
-│   ├── client-side.cpp         # TLS 1.3 client with colored output
-│   └── sqlite3.c/h             # Bundled SQLite database
-├── scripts/
-│   ├── start_demo.sh           # One-command demo launcher
-│   ├── demo_documents.sh       # Interactive document browser
-│   ├── run_tests_tui.py        # Beautiful TUI test runner
-│   ├── start_with_wireshark.sh # Auto-launch Wireshark
-│   ├── analyze_packets.sh      # Packet analysis tool
-│   └── comprehensive_tests.sh  # Complete test suite
-├── certs/
-│   ├── cert.pem                # Self-signed certificate
-│   └── key.pem                 # Private key
-├── data/
-│   └── documents.db            # SQLite database (auto-created)
-├── docs/
-│   └── acmart-primary/
-│       └── report.tex          # ACM-style report source
-├── config/
-│   └── wireshark_colorfilters  # Custom Wireshark colors
-├── QUICK_START.md              # Quick reference guide
-├── DEMO_GUIDE.md               # Comprehensive demo guide
-└── report.pdf                  # Compiled research report
-```
-
----
 
 ## 🎓 Academic Context
 
@@ -277,6 +232,3 @@ Educational/Research Use - University of New Brunswick
 
 This is an academic project. For questions or feedback, please refer to the documentation.
 
----
-
-**Made with ❤️ at University of New Brunswick**

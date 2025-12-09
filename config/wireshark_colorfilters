@@ -1,0 +1,29 @@
+# Wireshark color filters for TLS 1.3 demo
+# Copy this to ~/.config/wireshark/colorfilters or import via View > Coloring Rules
+
+# TLS 1.3 traffic (green background)
+@TLS 1.3@tls.handshake.version == 0x0304@[57568,65535,57568][0,0,0]
+
+# TLS 1.2 traffic (red background) - should not appear
+@TLS 1.2 (Legacy)@tls.handshake.version == 0x0303@[65535,57568,57568][0,0,0]
+
+# ClientHello (light blue)
+@ClientHello@tls.handshake.type == 1@[49087,60652,65535][0,0,0]
+
+# ServerHello (light green)
+@ServerHello@tls.handshake.type == 2@[57568,65535,57568][0,0,0]
+
+# Certificate (yellow)
+@Certificate@tls.handshake.type == 11@[65535,65535,49087][0,0,0]
+
+# Application Data (light gray)
+@Application Data@tls.app_data@[57568,57568,57568][65535,65535,65535]
+
+# TLS Alerts (red)
+@TLS Alert@tls.alert_message@[65535,40606,40606][65535,65535,65535]
+
+# Encrypted Handshake (cyan)
+@Encrypted Handshake@tls.handshake.type == 8@[49087,65535,65535][0,0,0]
+
+# Key Exchange (magenta)
+@Key Exchange@tls.handshake.type == 12 || tls.handshake.type == 16@[65535,49087,65535][0,0,0]

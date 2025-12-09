@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TLS 1.3 Server Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🔒 TLS 1.3 Secure Document Server</h1>
+            <p class="subtitle">University of New Brunswick | Real-time Monitoring Dashboard</p>
+        </header>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="status-label">Status:</span>
+                <span id="server-status" class="status-value status-running">● RUNNING</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Uptime:</span>
+                <span id="uptime" class="status-value">00:00:00</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Port:</span>
+                <span class="status-value">8080</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">TLS:</span>
+                <span class="status-value">1.3 Only</span>
+            </div>
+        </div>
+
+        <!-- Statistics Cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">🔌</div>
+                <div class="stat-content">
+                    <div class="stat-label">Connections</div>
+                    <div id="total-connections" class="stat-value">0</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">📄</div>
+                <div class="stat-content">
+                    <div class="stat-label">Requests</div>
+                    <div id="total-requests" class="stat-value">0</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">❌</div>
+                <div class="stat-content">
+                    <div class="stat-label">Errors</div>
+                    <div id="total-errors" class="stat-value">0</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">⚠️</div>
+                <div class="stat-content">
+                    <div class="stat-label">Rate Limited</div>
+                    <div id="total-rate-limited" class="stat-value">0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Grid -->
+        <div class="main-grid">
+            <!-- Recent Requests Panel -->
+            <div class="panel">
+                <h2 class="panel-title">📋 Recent Requests</h2>
+                <div class="table-container">
+                    <table id="requests-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Client</th>
+                                <th>Document</th>
+                                <th>Latency</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="requests-body">
+                            <tr>
+                                <td colspan="5" class="no-data">No requests yet</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Performance Metrics Panel -->
+            <div class="panel">
+                <h2 class="panel-title">📊 Performance Metrics</h2>
+                <div class="metrics-grid">
+                    <div class="metric-item">
+                        <div class="metric-label">Average Latency</div>
+                        <div id="avg-latency" class="metric-value">0.00 ms</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Min Latency</div>
+                        <div id="min-latency" class="metric-value">0.00 ms</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Max Latency</div>
+                        <div id="max-latency" class="metric-value">0.00 ms</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Requests/Second</div>
+                        <div id="rps" class="metric-value">0.0</div>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="latencyChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Document Popularity Panel -->
+            <div class="panel">
+                <h2 class="panel-title">📚 Document Popularity</h2>
+                <div class="chart-container">
+                    <canvas id="documentsChart"></canvas>
+                </div>
+            </div>
+
+            <!-- TLS Statistics Panel -->
+            <div class="panel">
+                <h2 class="panel-title">🔐 TLS Statistics</h2>
+                <div class="chart-container">
+                    <canvas id="cipherChart"></canvas>
+                </div>
+                <div class="tls-info">
+                    <div class="info-item">
+                        <span class="info-label">TLS Version:</span>
+                        <span class="info-value">1.3 Enforced ✓</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Perfect Forward Secrecy:</span>
+                        <span class="info-value">Enabled ✓</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Made with ❤️ at University of New Brunswick | TLS 1.3 + AEAD + Perfect Forward Secrecy</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

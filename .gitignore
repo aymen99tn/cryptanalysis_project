@@ -71,6 +71,7 @@ Desktop.ini
 *.Zone.Identifier
 .AppleDouble
 .LSOverride
+.claude
 
 # Debug symbols
 *.dSYM/
@@ -85,3 +86,7 @@ test_results/
 # Backup files
 *.bak
 *.backup
+
+# MD files
+GEMINI.md
+CLEANUP_SUMMARY.md
